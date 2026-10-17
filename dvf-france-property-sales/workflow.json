@@ -1,0 +1,160 @@
+{
+  "id": "dvf-sales-sheets-v1",
+  "name": "DVF property sales -> Google Sheets (Apify)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## DVF property sales -> Google Sheets\n\nRuns **dvf-france-property-sales** every Monday at 07:00 and appends new transactions for the selected department(s) to Google Sheets.\n\n### Setup (5 minutes)\n1. **Install the Apify node**: Settings -> Community nodes -> Install -> `@apify/n8n-nodes-apify`, then restart n8n if asked.\n2. **Apify node**: open `Apify - run DVF`, create/select an **Apify API key** credential.\n3. **Google Sheets node**: create/select a **Google Sheets OAuth2** credential, paste your spreadsheet ID into `Document ID` and keep the tab `Sheet1`. Headers are created automatically on the first run.\n4. **Filters**: in the Apify node set `departments` (e.g. `[\"75\"]`, `[\"69\"]`, `[\"2A\"]`) and optionally `communeName`, `postalCode`, `propertyType`, price/surface ranges and `year`. `maxResults` bounds cost.\n5. **Schedule**: default `0 7 * * 1` (Mondays, n8n instance timezone).\n\n### Good to know\n- `oneRowPerTransaction: true` merges multi-lot sales (apartment + cellar + parking) into one clean row.\n- DVF is published twice a year; a year that is not published yet returns no rows.\n- Re-running appends the same transactions again. Keep `maxResults` and the schedule modest, or point the workflow at a fresh sheet per period. The DVF API has no incremental cursor.\n\n### Cost\n$0.003 per returned transaction row (Actor pricing). `maxTotalChargeUsd: 0.5` caps a single run.",
+        "height": 520,
+        "width": 620
+      },
+      "id": "e2b7c96c-b7e5-4f23-9506-691effd594cd",
+      "name": "Note 2c77b673",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "fa921970-98d8-4312-83d5-6179cfd201cd",
+      "name": "Schedule - weekly Monday 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apifyApi",
+        "resource": "Actors",
+        "operation": "Run actor and get dataset",
+        "actorId": "suitable_sunspot~dvf-france-property-sales",
+        "customBody": "{\n  \"departments\": [\n    \"75\"\n  ],\n  \"year\": \"2025\",\n  \"salesOnly\": true,\n  \"oneRowPerTransaction\": true,\n  \"maxResults\": 100\n}",
+        "timeout": 900,
+        "memory": 1024,
+        "maxTotalChargeUsd": 0.5,
+        "build": ""
+      },
+      "credentials": {
+        "apifyApi": {
+          "id": "REPLACE_APIFY_CREDENTIAL_ID",
+          "name": "Apify API key (replace)"
+        }
+      },
+      "id": "c60d7615-d02c-48b1-a7b3-61d86ef4a1b8",
+      "name": "Apify - run DVF",
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 2,
+      "position": [
+        280,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Flatten DVF transactions to stable, human-readable sheet columns.\nconst rows = [];\n\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  if (!j.idMutation) continue;\n\n  rows.push({\n    json: {\n      mutation_id: j.idMutation,\n      date: j.dateMutation || '',\n      department: j.codeDepartement || '',\n      commune: j.nomCommune || '',\n      postal_code: j.codePostal || '',\n      address: j.adresse || '',\n      property_types: Array.isArray(j.typesLocal)\n        ? j.typesLocal.join('; ')\n        : j.typesLocal || '',\n      price_eur: j.valeurFonciere ?? '',\n      price_per_m2: j.prixM2 ?? '',\n      surface_m2: j.surfaceReelleBati ?? '',\n      rooms: j.nombrePiecesPrincipales ?? '',\n      land_m2: j.surfaceTerrain ?? '',\n      latitude: j.latitude ?? '',\n      longitude: j.longitude ?? '',\n    },\n  });\n}\n\nreturn rows;"
+      },
+      "id": "bcc13f38-2e07-4e23-81bb-bf6f309c30a3",
+      "name": "Code - normalize sales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account (replace)"
+        }
+      },
+      "id": "4a8daac5-6c9a-4cf7-be9b-f99a6160fd0b",
+      "name": "Google Sheets - append sales",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        840,
+        60
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule - weekly Monday 07:00": {
+      "main": [
+        [
+          {
+            "node": "Apify - run DVF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify - run DVF": {
+      "main": [
+        [
+          {
+            "node": "Code - normalize sales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - normalize sales": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - append sales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

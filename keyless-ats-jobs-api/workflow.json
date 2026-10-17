@@ -1,0 +1,270 @@
+{
+  "id": "ats-jobs-sheets-v1",
+  "name": "ATS jobs monitor -> Google Sheets (Apify)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ATS jobs monitor -> Google Sheets\n\nRuns **keyless-ats-jobs-api** every day at 08:00, keeps only job postings that appeared since the previous run, appends them to Google Sheets and (optionally) posts one digest to Slack and Telegram.\n\n### Setup (5 minutes)\n1. **Install the Apify node**: Settings -> Community nodes -> Install -> `@apify/n8n-nodes-apify`, then restart n8n if asked.\n2. **Apify node**: open `Apify - run ATS jobs`, create/select an **Apify API key** credential.\n3. **Google Sheets node**: create/select a **Google Sheets OAuth2** credential, paste your spreadsheet ID into `Document ID` and keep the tab `Sheet1`. Headers are created automatically on the first run.\n4. **Targets**: in the Apify node replace `companyWebsites` with your companies (website or careers URL, e.g. `acme.com`). Companies that cannot be matched to an ATS are reported by the Actor and are free.\n5. **Schedule**: adjust the cron (default `0 8 * * *`, n8n instance timezone).\n\n### How \"only new jobs\" works\n`onlyNewJobs: true` + `stateKey` make the Actor remember what it already delivered (named key-value store in your Apify account). First run = baseline, later runs = new postings only. Use one `stateKey` per watch-list.\n\n### Optional notifications\n`Code - digest` builds one message; enable **Slack - digest** and/or **Telegram - digest** and pick credential/channel/chat. Both are disabled by default.\n\n### Cost\n$0.002 per delivered job listing (Actor pricing). `maxTotalChargeUsd: 0.5` caps a single run. Companies that are not detected cost nothing.",
+        "height": 620,
+        "width": 620
+      },
+      "id": "547b060d-7787-4bdd-b69c-e60acb6f01fa",
+      "name": "Note 65bfca55",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -520
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Tuning\n- `maxJobsPerCompany`: cap per employer (default 50). Hitting it is reported as `capped`, never silent.\n- `maxItems`: hard ceiling across all companies, also bounds cost.\n- `includeDescriptions: false` keeps rows light. Set `true` if you need full job descriptions in the sheet.\n- Column order in Google Sheets follows the Code node keys; add columns there if you need more fields.",
+        "height": 320,
+        "width": 460
+      },
+      "id": "efb6e058-dda7-4aad-95fd-478a34461dc0",
+      "name": "Note 8f4c5056",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        640,
+        -520
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "f16e8a8c-44be-4e59-8f8b-e5749a033d20",
+      "name": "Schedule - daily 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "apifyApi",
+        "resource": "Actors",
+        "operation": "Run actor and get dataset",
+        "actorId": "suitable_sunspot~keyless-ats-jobs-api",
+        "customBody": "{\n  \"companyWebsites\": [\n    \"stripe.com\",\n    \"notion.so\"\n  ],\n  \"onlyNewJobs\": true,\n  \"stateKey\": \"n8n-ats-watchlist\",\n  \"maxJobsPerCompany\": 50,\n  \"maxItems\": 100,\n  \"includeDescriptions\": false\n}",
+        "timeout": 900,
+        "memory": 1024,
+        "maxTotalChargeUsd": 0.5,
+        "build": ""
+      },
+      "credentials": {
+        "apifyApi": {
+          "id": "REPLACE_APIFY_CREDENTIAL_ID",
+          "name": "Apify API key (replace)"
+        }
+      },
+      "id": "444e2b9a-7dab-4ae2-b345-e8e73a70d9df",
+      "name": "Apify - run ATS jobs",
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 2,
+      "position": [
+        260,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One row per job. The Actor already returns only postings that are new\n// for this stateKey, so this only guards against duplicates inside a run.\nconst seen = new Set();\nconst rows = [];\n\nfor (const item of $input.all()) {\n  const j = item.json || {};\n  const key = [j.vendor, j.company, j.jobId || j.url].join('|');\n  if (!key || seen.has(key)) continue;\n  seen.add(key);\n\n  const salary =\n    j.salaryRaw ||\n    [j.salaryMin, j.salaryMax]\n      .filter((v) => v !== null && v !== undefined && v !== '')\n      .join(' - ');\n\n  rows.push({\n    json: {\n      job_id: j.jobId || '',\n      company: j.company || '',\n      title: j.title || '',\n      location: j.location || '',\n      department: j.department || '',\n      employment_type: j.employmentType || '',\n      remote: j.remote === true ? 'yes' : j.remote === false ? 'no' : '',\n      posted_at: j.postedAt || '',\n      salary: salary || '',\n      url: j.url || '',\n      ats: j.vendor || '',\n      first_seen: new Date().toISOString(),\n    },\n  });\n}\n\nreturn rows;"
+      },
+      "id": "bf6cc24c-a2c8-4849-932e-8c45770b63a9",
+      "name": "Code - normalize jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account (replace)"
+        }
+      },
+      "id": "d05fc4c8-b0b4-4b94-908a-60c93b73789d",
+      "name": "Google Sheets - append jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        820,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Build one short digest so Slack/Telegram get a single message per run.\nconst rows = $input.all().map((i) => i.json).filter((r) => r && r.title);\nif (!rows.length) return [];\n\nconst shown = rows.slice(0, 15);\nconst lines = shown.map(\n  (r) => `- ${r.title} | ${r.company} | ${r.location || 'n/a'}\\n  ${r.url}`,\n);\nconst more =\n  rows.length > shown.length\n    ? `\\n...and ${rows.length - shown.length} more rows in Google Sheets.`\n    : '';\n\nreturn [\n  {\n    json: {\n      count: rows.length,\n      text: `${rows.length} new job posting(s)\\n\\n${lines.join('\\n')}${more}`,\n    },\n  },\n];"
+      },
+      "id": "74a85292-5327-4909-9c63-d1919eab6d67",
+      "name": "Code - digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_CHANNEL_ID",
+          "mode": "id"
+        },
+        "messageType": "text",
+        "text": "={{ $json.text }}",
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "REPLACE_SLACK_CREDENTIAL_ID",
+          "name": "Slack account (replace)"
+        }
+      },
+      "id": "e3151d16-1c90-4688-b816-b415a6bac178",
+      "name": "Slack - digest (optional)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        1380,
+        60
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "REPLACE_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account (replace)"
+        }
+      },
+      "id": "3335a9ef-aeea-48f6-865c-be7accdf6513",
+      "name": "Telegram - digest (optional)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1380,
+        260
+      ],
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "Schedule - daily 08:00": {
+      "main": [
+        [
+          {
+            "node": "Apify - run ATS jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify - run ATS jobs": {
+      "main": [
+        [
+          {
+            "node": "Code - normalize jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - normalize jobs": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - append jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - append jobs": {
+      "main": [
+        [
+          {
+            "node": "Code - digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - digest": {
+      "main": [
+        [
+          {
+            "node": "Slack - digest (optional)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram - digest (optional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
